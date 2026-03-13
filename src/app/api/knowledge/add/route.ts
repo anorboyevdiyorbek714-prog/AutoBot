@@ -7,78 +7,62 @@ import mammoth from "mammoth";
 
 export async function POST(req: NextRequest) {
   try {
-    const pdf = require("pdf-parse");
     const formData = await req.formData();
     const botId = formData.get("botId") as string;
-    const text = formData.get("text") as string | null;
+    const text = formData.get("text") as string;
     const file = formData.get("file") as File | null;
 
-    if (!botId) {
-      return NextResponse.json({ error: "botId is required" }, { status: 400 });
-    }
-
     let extractedText = "";
-    let fileName = "Raw Text";
-    let fileType = "txt";
+    let title = "Matnli ma'lumot";
 
     if (file) {
-      fileName = file.name;
-      fileType = fileName.split(".").pop() || "txt";
+      title = file.name;
       const buffer = Buffer.from(await file.arrayBuffer());
-
-      if (fileType === "pdf") {
-        const data = await pdf(buffer);
-        extractedText = data.text;
-      } else if (fileType === "docx") {
-        const data = await mammoth.extractRawText({ buffer });
-        extractedText = data.value;
-      } else {
+      
+      if (file.type === "application/pdf") {
+        const pdf = require("pdf-parse"); // Faqat kerak payti chaqiriladi
+        const pdfData = await pdf(buffer);
+        extractedText = pdfData.text;
+      } else if (file.name.endsWith(".docx")) {
+        const result = await mammoth.extractRawText({ buffer });
+        extractedText = result.value;
+      } else if (file.type === "text/plain") {
         extractedText = buffer.toString("utf-8");
       }
     } else if (text) {
       extractedText = text;
-    } else {
-      return NextResponse.json({ error: "Knowledge content is empty" }, { status: 400 });
     }
 
-    // 1. Save Document Reference
+    if (!extractedText.trim()) {
+      return NextResponse.json({ error: "Matn yoki fayl bo'sh" }, { status: 400 });
+    }
+
+    // Bazaga aslnusxani saqlaymiz
     const { data: document, error: docError } = await supabase
       .from("documents")
-      .insert({
-        bot_id: botId,
-        name: fileName,
-        type: fileType,
-      })
+      .insert([{ bot_id: botId, title, content: extractedText }])
       .select()
       .single();
 
     if (docError) throw docError;
 
-    // 2. Chunking
+    // Matnni parchalaymiz
     const chunks = splitText(extractedText);
 
-    // 3. Embedding and Ingestion
-    const chunkPromises = chunks.map(async (content, index) => {
-      const embedding = await generateEmbedding(content);
-      return {
+    // Parchalarni vektorlashtirib bazaga saqlaymiz
+    for (const chunk of chunks) {
+      const embedding = await generateEmbedding(chunk);
+      await supabase.from("document_chunks").insert([{
         document_id: document.id,
-        content,
+        bot_id: botId,
+        content: chunk,
         embedding,
-        metadata: { index, fileName },
-      };
-    });
+      }]);
+    }
 
-    const processedChunks = await Promise.all(chunkPromises);
-
-    const { error: chunkError } = await supabase
-      .from("document_chunks")
-      .insert(processedChunks);
-
-    if (chunkError) throw chunkError;
-
-    return NextResponse.json(document);
-  } catch (err: any) {
-    console.error("Knowledge ingestion error:", err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ success: true });
+  } catch (error: any) {
+    console.error("Knowledge add error:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
