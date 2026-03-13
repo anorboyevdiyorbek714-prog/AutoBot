@@ -17,6 +17,8 @@ export const metadata: Metadata = {
   description: "Configure your AI Telegram Bot with ease.",
 };
 
+import DashboardLayout from "@/components/DashboardLayout";
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -27,7 +29,9 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        {children}
+        <DashboardLayout>
+          {children}
+        </DashboardLayout>
       </body>
     </html>
   );
