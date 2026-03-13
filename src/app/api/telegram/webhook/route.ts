@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import OpenAI from "openai";
 
+// Vercel build paytida qotib qolmasligi uchun cachingni o'chiramiz
+export const dynamic = 'force-dynamic';
+
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
@@ -43,6 +46,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
+    // 2. Bazadan aynan shu botni qidiramiz
     const { data: bot } = await supabaseAdmin
       .from("bots")
       .select("id")
@@ -53,14 +57,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Bot not found" }, { status: 404 });
     }
 
-    // 2. Foydalanuvchi so'rovini Vektorga aylantiramiz
+    // 3. Foydalanuvchi so'rovini Vektorga aylantiramiz
     const embeddingResponse = await openai.embeddings.create({
       model: "text-embedding-3-small",
       input: userText,
     });
     const queryEmbedding = embeddingResponse.data[0].embedding;
 
-    // 3. Bazadan fayllar/matnlarni qidirish (RAG)
+    // 4. Bazadan fayllar/matnlarni qidirish (RAG)
     const { data: matchedChunks } = await supabaseAdmin.rpc("match_document_chunks", {
       query_embedding: queryEmbedding,
       match_threshold: 0.3,
@@ -78,7 +82,7 @@ export async function POST(req: NextRequest) {
       aiContext = "Kechirasiz, menda bu borada aniq ma'lumot yo'q. Iltimos operatorga bog'laning.";
     }
 
-    // 4. OpenAI'dan chiroyli javob generatsiya qilish
+    // 5. OpenAI'dan chiroyli javob generatsiya qilish
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
@@ -92,7 +96,7 @@ export async function POST(req: NextRequest) {
 
     const aiResponse = completion.choices[0].message.content;
 
-    // 5. Telegramga xabarni qaytarish
+    // 6. Telegramga xabarni qaytarish
     await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
