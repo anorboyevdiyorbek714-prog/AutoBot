@@ -1,3 +1,6 @@
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 import { supabase } from "@/lib/supabase";
 import Link from "next/link";
 import { Bot, Plus, Trash2, ArrowRight } from "lucide-react";
