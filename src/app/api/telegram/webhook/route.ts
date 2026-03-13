@@ -2,20 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import OpenAI from "openai";
 
+// XAVFSIZLIK: Kalit endi .env faylidan olinadi
 const openai = new OpenAI({
-  apiKey: "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",
+  apiKey: process.env.OPENAI_API_KEY,
 });
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
 interface TelegramWebhookBody {
   message?: {
-    chat: {
-      id: number;
-    };
+    chat: { id: number };
     text?: string;
   };
 }
@@ -39,25 +38,51 @@ export async function POST(req: NextRequest) {
     const chatId = message.chat.id;
     const userText = message.text;
 
-    // 1. Fetch knowledge base from Supabase
+    // 1. Bazadan aynan qaysi botga yozishganini topish
     const { data: bot, error: botError } = await supabaseAdmin
       .from("bots")
-      .select("knowledge_base")
+      .select("id, knowledge_base")
       .eq("bot_token", botToken)
       .single();
 
     if (botError || !bot) {
-      console.error("Bot not found for token:", botToken, botError);
       return NextResponse.json({ error: "Bot not found" }, { status: 404 });
     }
 
-    // 2. Generate AI response
+    // 2. Foydalanuvchi yozgan savolni Vektorga aylantirish (RAG tizimi uchun)
+    const embeddingResponse = await openai.embeddings.create({
+      model: "text-embedding-3-small",
+      input: userText,
+    });
+    const queryEmbedding = embeddingResponse.data[0].embedding;
+
+    // 3. Vektor bazadan savolga eng mos javoblarni (bo'laklarni) qidirish
+    const { data: matchedChunks, error: matchError } = await supabaseAdmin.rpc(
+      "match_document_chunks",
+      {
+        query_embedding: queryEmbedding,
+        match_threshold: 0.3, // O'xshashlik darajasi
+        match_count: 5, // Eng mos 5 ta bo'lakni olib keladi
+        p_bot_id: bot.id,
+      }
+    );
+
+    // AI ga beriladigan umumiy ma'lumotni tayyorlash (Eski text + Yangi PDF/Fayl qismlari)
+    let aiContext = `Boshlang'ich ma'lumot: ${bot.knowledge_base || ""}\n\n`;
+    if (matchedChunks && matchedChunks.length > 0) {
+      aiContext += "Qo'shimcha hujjatlardan topilgan ma'lumotlar:\n";
+      matchedChunks.forEach((chunk: any) => {
+        aiContext += `- ${chunk.content}\n`;
+      });
+    }
+
+    // 4. OpenAI orqali aqlli javob shakllantirish
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
-          content: `You are a helpful assistant. Use this knowledge base to answer the user: ${bot.knowledge_base}`,
+          content: `Sen yordamchi agentsan. Faqat quyidagi ma'lumotlarga asoslanib foydalanuvchiga javob ber. Agar javob ma'lumotlar ichida bo'lmasa, 'Bu haqda ma'lumotga ega emasman' deb javob ber.\n\nMa'lumotlar:\n${aiContext}`,
         },
         { role: "user", content: userText },
       ],
@@ -65,8 +90,8 @@ export async function POST(req: NextRequest) {
 
     const aiResponse = completion.choices[0].message.content;
 
-    // 3. Send message back to Telegram
-    const telegramRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+    // 5. Telegramga javobni yuborish
+    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -75,12 +100,7 @@ export async function POST(req: NextRequest) {
       }),
     });
 
-    if (!telegramRes.ok) {
-      const errorData = await telegramRes.json();
-      console.error("Telegram API error:", errorData);
-    }
-
-    // 4. Log to messages table
+    // 6. Tarixni saqlab qo'yish
     await supabaseAdmin.from("messages").insert([
       {
         chat_id: chatId.toString(),
@@ -92,8 +112,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ ok: true });
   } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : "An unknown error occurred";
-    console.error("Webhook processing error:", err);
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+    console.error("Webhook xatosi:", err);
+    return NextResponse.json({ error: "Server xatosi" }, { status: 500 });
   }
 }
