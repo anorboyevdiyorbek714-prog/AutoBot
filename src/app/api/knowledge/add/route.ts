@@ -1,11 +1,13 @@
+export const dynamic = 'force-dynamic';
+
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { splitText, generateEmbedding } from "@/lib/rag";
-const pdf = require("pdf-parse");
 import mammoth from "mammoth";
 
 export async function POST(req: NextRequest) {
   try {
+    const pdf = require("pdf-parse");
     const formData = await req.formData();
     const botId = formData.get("botId") as string;
     const text = formData.get("text") as string | null;
