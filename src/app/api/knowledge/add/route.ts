@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { splitText, generateEmbedding } from "@/lib/rag";
-import pdf from "pdf-parse";
+const pdf = require("pdf-parse");
 import mammoth from "mammoth";
 
 export async function POST(req: NextRequest) {
